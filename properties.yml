@@ -1,0 +1,1 @@
+connectString : postgres://pqgotest:password@localhost/pqgotest
