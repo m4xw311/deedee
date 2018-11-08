@@ -1,1 +1,2 @@
 connectString : postgres://pqgotest:password@localhost/pqgotest
+entryPoint: main.sql

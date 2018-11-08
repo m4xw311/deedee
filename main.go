@@ -9,6 +9,8 @@ import (
 	"log"
 	"path/filepath"
 	"github.com/fatih/color"
+	"bufio"
+	"os"
 )
 
 type Properties struct {
@@ -17,11 +19,12 @@ type Properties struct {
 }
 
 type Dictionary struct {
-	CheckHistoryExists string
-	SetDefaultSchema string
-	CreateHistory string
-	History string
-	DefaultSchema string
+	CheckHistoryExists string `yaml:"checkHistoryExists,omitempty"`
+	SetDefaultSchema string `yaml:"setDefaultSchema,omitempty"`
+	CreateHistory string `yaml:"createHistory,omitempty"`
+	History string `yaml:"history,omitempty"`
+	DefaultSchema string `yaml:"defaultSchema,omitempty"`
+	HistoryRecord string `yaml:"historyRecord,omitempty"`
 }
 
 func getProperties(logMode string, headingColor *color.Color) Properties {
@@ -32,7 +35,7 @@ func getProperties(logMode string, headingColor *color.Color) Properties {
 	}
 	propertiesFileContent, err := ioutil.ReadFile(propertiesFileName)
 	if logMode == "debug" {
-		headingColor.Println("Property file content : \n")
+		headingColor.Println("Property file content :")
 		fmt.Println(string(propertiesFileContent))
 	}
 	if err != nil {
@@ -54,14 +57,50 @@ func getProperties(logMode string, headingColor *color.Color) Properties {
 	return properties
 }
 
-func setSchema(db *sql.DB, dictionary Dictionary, schema string) error {
+func getDictionary(logMode string, headingColor *color.Color) Dictionary {
+        dictionaryFileName, _ := filepath.Abs("./dictionary.yml")
+        if logMode == "debug" {
+                headingColor.Println("Reading dictionary file :")
+                fmt.Println(dictionaryFileName)
+        }
+        dictionaryFileContent, err := ioutil.ReadFile(dictionaryFileName)
+        if logMode == "debug" {
+                headingColor.Println("Dictionary file content :")
+                fmt.Println(string(dictionaryFileContent))
+        }
+        if err != nil {
+                log.Fatal(err)
+        }
+        var dictionary Dictionary
+        err = yaml.Unmarshal(dictionaryFileContent, &dictionary)
+        if err != nil {
+                log.Fatal(err)
+        }
+        if logMode == "debug" {
+                dictionaryString, err := yaml.Marshal(dictionary)
+                if err != nil {
+                        log.Fatal(err)
+                }
+                headingColor.Println("Unmarshaled data : ")
+                fmt.Println(string(dictionaryString))
+        }
+        return dictionary
+}
+
+func setSchema(logMode string, headingColor *color.Color, db *sql.DB, dictionary Dictionary, schema string) error {
+	if logMode == "debug" {
+		headingColor.Print("Schema : ")
+                fmt.Println(schema)
+		headingColor.Print("Set Default Schmea: ")
+                fmt.Println(dictionary.SetDefaultSchema)
+	}
 	_, err := db.Exec(fmt.Sprintf(dictionary.SetDefaultSchema, schema))
 	return err
 }
 
 func createHistoryIfNotExisting(logMode string, headingColor *color.Color, db *sql.DB, dictionary Dictionary, schema string, history string) error {
 	if logMode == "debug" {
-                headingColor.Println("Checking if history exists")
+		headingColor.Println("Checking if history exists")
 		headingColor.Print("Schema : ")
 		fmt.Println(schema)
 		headingColor.Print("History : ")
@@ -88,42 +127,65 @@ func createHistoryIfNotExisting(logMode string, headingColor *color.Color, db *s
 	}
 	return err
 }
-
+func executeStatement(logMode string, headingColor *color.Color, db *sql.DB, dictionary Dictionary, schema string, history string, statement string) (*sql.Rows, error) {
+	if logMode == "debug" {
+		headingColor.Print("Executing sql statement: ")
+		fmt.Println(statement)
+	}
+	rows, err := db.Query(statement)
+	return rows, err
+}
 func main() {
-	var dictionary Dictionary
-	dictionary.SetDefaultSchema="set search_path='%s'"
-	dictionary.CreateHistory="create table databasehistory (fileName varchar(100), statementPos integer, statementHash varchar(100), executionTime timestamp, executionStatus varchar(100), executedBy varchar(100))"
-	dictionary.CheckHistoryExists="SELECT EXISTS ( SELECT 1 FROM information_schema.tables WHERE table_schema = '%s' AND table_name = '%s')"
-	dictionary.History="databasehistory"
-	dictionary.DefaultSchema="public"
 	headingColor := color.New(color.FgCyan).Add(color.Bold)
 	logMode := "debug"
 	properties := getProperties(logMode, headingColor)
+	dictionary := getDictionary(logMode, headingColor)
 	db, err := sql.Open("postgres", properties.ConnectString)
 	if err != nil {
 		log.Fatal(err)
-	}
-	if logMode == "debug" {
-		headingColor.Println("Executing sql statement")
 	}
 	err = createHistoryIfNotExisting(logMode, headingColor, db, dictionary, dictionary.DefaultSchema, dictionary.History)
 	if err != nil {
 		log.Fatal(err)
 	}
-	err = setSchema(db, dictionary, dictionary.DefaultSchema)
+	err = setSchema(logMode, headingColor, db, dictionary, dictionary.DefaultSchema)
+	if err != nil {
+		fmt.Println("h");
+		log.Fatal(err)
+	}
+	fileHandle, _ := os.Open("main.sql")
+	defer fileHandle.Close()
+	fileScanner := bufio.NewScanner(fileHandle)
+	statement:=""
+	inverse:=""
+	for fileScanner.Scan() {
+		line := fileScanner.Text()
+		if (line[0:2]!="--") {
+			statement=statement+line+"\n"
+			inverse=""
+		} else {
+			fmt.Println(statement)
+			statement=""
+			inverse=inverse+line+"\n"
+		}
+	}
+	fmt.Println(statement)
+	rows, err := executeStatement(logMode, headingColor, db, dictionary, dictionary.DefaultSchema, dictionary.History, "UPDATE users set name=name||'z' where age=21; SELECT name,age FROM users WHERE age = 21; UPDATE users set name=name||'1' where age=21;commit;SELECT age FROM users WHERE age = 21;")
 	if err != nil {
 		log.Fatal(err)
 	}
-	age := 21
-	rows, err := db.Query("SELECT name FROM users WHERE age = $1", age)
-	if err != nil {
-		log.Fatal(err)
+	cols, err := rows.Columns()
+	vals := make([]interface{}, len(cols))
+	for i, _ := range cols {
+		vals[i] = new(sql.RawBytes)
 	}
 	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
+		err := rows.Scan(vals...)
+		if err != nil {
 			log.Fatal(err)
 		}
-		fmt.Printf("%s\n", name)
+		for _, val := range vals {
+			fmt.Printf("%s\n", string(*val.(*sql.RawBytes)))
+		}
 	}
 }

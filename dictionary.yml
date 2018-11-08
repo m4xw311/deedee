@@ -1,0 +1,6 @@
+setDefaultSchema: "set search_path='%s'"
+createHistory: "create table databasehistory (fileName varchar(100), statementPos integer, statementHash varchar(100), executionType varchar(100), executionTime timestamp, executionStatus varchar(100), executedBy varchar(100))"
+checkHistoryExists: "SELECT EXISTS ( SELECT 1 FROM information_schema.tables WHERE table_schema = '%s' AND table_name = '%s')"
+history: "databasehistory"
+defaultSchema: "public"
+historyRecord: "insert into databasehistory values ('%s', '%d', '%s', '%s', TO_TIMESTAMP('%s','YYYY-MM-DD HH:MI:SS:MS'), '%s', '%s')"
